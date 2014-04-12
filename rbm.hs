@@ -130,12 +130,19 @@ learn verbose !r v =
          positive = coactivityMatrix visibles hiddens
      -- putStrLn "positive:"; print positive
      let dv = V.cons 1 $ visibleFromHiddenD r hiddens
-     if verbose
+     verbr <- R.getStdRandom (R.randomR (0, 1.0::Double))
+     let doPrint = verbose || verbr < 0.01
+     if doPrint
         then do putStrLn "v:"; print v
-                putStrLn "dv:"; print dv
+                putStrLn "dv:"
+                print $ V.map ((/100) . fromIntegral . round . (*100)) dv
+                print("diff:",
+                      V.sum $ V.map (**2) $ V.zipWith (-) visibles dv)
+                let boolDiff x y = if x == y then 0 else 1::Int
+                print("diff (>0.5):",
+                      V.sum $
+                      V.zipWith boolDiff (V.drop 1 $ V.map (>0.5) dv) v)
        else return ()
-     print("diff:",
-           V.sum $ V.map (**2) $ V.zipWith (-) visibles dv)
      let dh = V.cons 1 $ hiddenFromVisibleD r dv
      -- putStrLn "dh:"; print dh
      let negative = coactivityMatrix dv dh
@@ -145,7 +152,9 @@ learn verbose !r v =
               matApplyUn (*0.03) $
               matApplyBin (-) positive negative
      let energy2 = energy r2 v h
-     print("energy change:", energy2 - energy1)
+     if doPrint
+       then print("energy change:", energy2 - energy1)
+       else return ()
      rbmWeights r2 `deepseq` return r2
 
 learnFromTrainingSet :: Bool -> Int -> RBM -> [V.Vector Bool] -> IO RBM
