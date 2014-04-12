@@ -4,6 +4,7 @@ import qualified Data.Vector as V
 import qualified System.Random as R
 import Control.Monad(replicateM, liftM, replicateM)
 import Data.Ord(comparing)
+import Data.Bits((.|.), (.&.), shift, testBit)
 
 data RBM =
   RBM { rbmWeights :: MAT.Matrix Double }
@@ -116,21 +117,21 @@ coactivityMatrix v h =
 learn :: RBM -> V.Vector Bool -> IO RBM
 learn r v =
   do h <- hiddenFromVisibleTr r (V.cons True v)
-     putStrLn "hidden:"; print h
+     -- putStrLn "hidden:"; print h
      let energy1 = energy r v h
          visibles = V.cons 1 $ V.map booleanToDouble v
          hiddens = V.cons 1 $ V.map booleanToDouble h
          positive = coactivityMatrix visibles hiddens
-     putStrLn "positive:"; print positive
+     -- putStrLn "positive:"; print positive
      let dv = V.cons 1 $ visibleFromHiddenD r hiddens
      putStrLn "v:"; print v
      putStrLn "dv:"; print dv
      print("diff:",
            V.sum $ V.map (**2) $ V.zipWith (-) visibles dv)
      let dh = V.cons 1 $ hiddenFromVisibleD r dv
-     putStrLn "dh:"; print dh
+     -- putStrLn "dh:"; print dh
      let negative = coactivityMatrix dv dh
-     putStrLn "negative:"; print negative
+     -- putStrLn "negative:"; print negative
      let r2 = RBM $
               matApplyBin (+) (rbmWeights r) $
               matApplyUn (*0.03) $
@@ -145,7 +146,7 @@ learnFromTrainingSet n r is = repea n r is
         repea n r [] = repea n r is
         repea n r1 (i:is) =
           do r2 <- learn r1 i
-             print $ rbmWeights r2
+             -- print $ rbmWeights r2
              repea (pred n) r2 is
 -- todo: use 'cycle' and 'iterateM'(??)
 
@@ -191,7 +192,7 @@ learnFromTrainingSetByRandomSearch n r0 is = repea n r0 is
         repea n r [] = repea n r is
         repea n r1 (i:is) =
           do (r2, improved) <- learnByRandomSearch r1 i
-             print $ rbmWeights r2
+             -- print $ rbmWeights r2
              repea (pred n) r2 is
 -- todo: use 'cycle' and 'iterateM'(??)
 
@@ -202,7 +203,7 @@ learnFromTrainingSetByRandomSearch n r0 is = repea n r0 is
 
 stringToBoolVector = V.fromList . map (=='1')
 
-input2 =
+inputNotFunction =
   map stringToBoolVector
   [ "01"
   , "10" ]
@@ -210,13 +211,13 @@ input2 =
 input =
   map stringToBoolVector
   [ "111000"
-  , "100111"
-  , "110100"
-  , "111001"
-  , "010011"
+  , "000111"
+  , "111000"
+  , "000111"
+  , "111000"
   , "000101"
   , "101010"
-  , "010101" ]
+  , "010111" ]
 
 rbm1 =
   RBM $ MAT.fromLists $
@@ -231,13 +232,44 @@ rbm2 =
     , [ 0,  0.2,  -0.04 ] ]
 
 example1 =
-  do -- r <- randomRBM 2 3
-     let r = rbm1
+  do r <- randomRBM 6 1
+     -- let r = rbm1
      putStrLn $ "starting with\n" ++ show r
-     learnFromTrainingSet 100 r (take 2 input2)
+     learnFromTrainingSet 5000 r (take 8 input)
      -- learnFromTrainingSetByRandomSearch 100 r (take 2 input2)
 
+booleanVectorFromInt :: Int -> Int -> V.Vector Bool
+booleanVectorFromInt n word =
+  V.fromList $ reverse
+  [ testBit word bit
+  | bit <- [0 .. pred n]]
+
+stringFromBooleanVector :: V.Vector Bool -> String
+stringFromBooleanVector = V.toList . V.map toDigit
+  where toDigit True = '1'
+        toDigit False = '0'
+
+-- learn the shift function
+example2 =
+  do let nbits = 3
+         maxshift = 2
+         numVisibles = maxshift+1 + 2*nbits
+         mask = shift 1 nbits - 1
+     let dataset =
+           [ booleanVectorFromInt numVisibles $
+             input
+             .|. shift output nbits
+             .|. (shift shDecoded $ 2*nbits)
+           | input <- [0..mask]
+           , sh <- [0..maxshift]
+           , let shDecoded = shift 1 sh
+           , let output = shift input sh .&. mask ]
+     mapM_ (print . stringFromBooleanVector) dataset
+     r <- randomRBM numVisibles 6
+     learnFromTrainingSet 20000 r dataset
+
+main = example1
 
 -- other examples
 -- learn functions on a few bits:
---   sum, mul, shift, div, sin
+--   sum, mul, div, sin
