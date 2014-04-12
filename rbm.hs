@@ -1,10 +1,15 @@
+{-# LANGUAGE BangPatterns #-}
 import qualified Data.List as L
 import qualified Data.Matrix as MAT
+import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Data.Vector as V
 import qualified System.Random as R
 import Control.Monad(replicateM, liftM, replicateM)
 import Data.Ord(comparing)
 import Data.Bits((.|.), (.&.), shift, testBit)
+import qualified Data.Char as C
+import Control.DeepSeq(deepseq)
 
 data RBM =
   RBM { rbmWeights :: MAT.Matrix Double }
@@ -73,8 +78,8 @@ visibleFromHiddenD r h =
 
 
 matApplyUn :: (a -> a) -> MAT.Matrix a -> MAT.Matrix a
-matApplyUn f m =
-  MAT.fromLists
+matApplyUn f !m =
+  MAT.fromLists $
   [ [ f $ m MAT.! (i,j)
     | j <- [1..MAT.ncols m]]
   | i <- [1..MAT.nrows m]]
@@ -85,7 +90,7 @@ matApplyBin _ m n
   | MAT.ncols m /= MAT.ncols n
     || MAT.nrows m /= MAT.nrows n
     = error "matrixes don't match"
-matApplyBin f m n =
+matApplyBin f !m !n =
   MAT.fromLists
   [ [ f (m MAT.! (i,j)) (n MAT.! (i,j))
     | j <- [1..MAT.ncols m]]
@@ -109,14 +114,15 @@ energy r visible hidden =
 
 coactivityMatrix :: V.Vector Double -> V.Vector Double
                  -> MAT.Matrix Double
-coactivityMatrix v h =
-  MAT.fromLists $
-  [ [ vi * hj | hj <- V.toList h ]
+coactivityMatrix !v !h =
+  MAT.fromLists
+  [ [ vi * hj
+    | hj <- V.toList h ]
   | vi <- V.toList v ]
 
-learn :: RBM -> V.Vector Bool -> IO RBM
-learn r v =
-  do h <- hiddenFromVisibleTr r (V.cons True v)
+learn :: Bool -> RBM -> V.Vector Bool -> IO RBM
+learn verbose !r v =
+  do h <- hiddenFromVisible r (V.cons True v)
      -- putStrLn "hidden:"; print h
      let energy1 = energy r v h
          visibles = V.cons 1 $ V.map booleanToDouble v
@@ -124,8 +130,10 @@ learn r v =
          positive = coactivityMatrix visibles hiddens
      -- putStrLn "positive:"; print positive
      let dv = V.cons 1 $ visibleFromHiddenD r hiddens
-     putStrLn "v:"; print v
-     putStrLn "dv:"; print dv
+     if verbose
+        then do putStrLn "v:"; print v
+                putStrLn "dv:"; print dv
+       else return ()
      print("diff:",
            V.sum $ V.map (**2) $ V.zipWith (-) visibles dv)
      let dh = V.cons 1 $ hiddenFromVisibleD r dv
@@ -138,14 +146,14 @@ learn r v =
               matApplyBin (-) positive negative
      let energy2 = energy r2 v h
      print("energy change:", energy2 - energy1)
-     return r2
+     rbmWeights r2 `deepseq` return r2
 
-learnFromTrainingSet :: Int -> RBM -> [V.Vector Bool] -> IO RBM
-learnFromTrainingSet n r is = repea n r is
+learnFromTrainingSet :: Bool -> Int -> RBM -> [V.Vector Bool] -> IO RBM
+learnFromTrainingSet verbose n r is = repea n r is
   where repea 0 r _ = return r
         repea n r [] = repea n r is
         repea n r1 (i:is) =
-          do r2 <- learn r1 i
+          do r2 <- learn verbose r1 i
              -- print $ rbmWeights r2
              repea (pred n) r2 is
 -- todo: use 'cycle' and 'iterateM'(??)
@@ -235,7 +243,7 @@ example1 =
   do r <- randomRBM 6 1
      -- let r = rbm1
      putStrLn $ "starting with\n" ++ show r
-     learnFromTrainingSet 5000 r (take 8 input)
+     learnFromTrainingSet True 5000 r (take 8 input)
      -- learnFromTrainingSetByRandomSearch 100 r (take 2 input2)
 
 booleanVectorFromInt :: Int -> Int -> V.Vector Bool
@@ -266,10 +274,79 @@ example2 =
            , let output = shift input sh .&. mask ]
      mapM_ (print . stringFromBooleanVector) dataset
      r <- randomRBM numVisibles 6
-     learnFromTrainingSet 20000 r dataset
+     learnFromTrainingSet True 20000 r dataset
 
-main = example1
 
--- other examples
--- learn functions on a few bits:
---   sum, mul, div, sin
+
+data Features
+  = First Char
+  | Other Char
+  | Last3 Char
+  | Last2 Char
+  | Last Char
+    deriving (Eq, Ord, Show)
+
+extractFeatures :: [String] -> [(Int, Features)]
+extractFeatures words =
+  [ (pos, feature)
+  | (word, pos) <- zip words [1..]
+  , feature <- features word]
+
+features :: String -> [Features]
+features [] = []
+features word =
+  [ First $ head word ]
+  ++ (if l > 1
+      then [Last $ word !! (l-1)]
+      else [])
+  ++ (if l > 2
+      then [Last2 $ word !! (l-2)]
+      else [])
+  ++ (if l > 3
+      then [Last3 $ word !! (l-3)]
+      else [])
+  ++ (map Other $ L.nub $ drop 1 $ dropAtEnd 3 $ word)
+  where l = length word
+
+dropAtEnd n = reverse . drop n . reverse
+
+xwords = recur [] []
+  where recur res word (c:cs)
+          | C.isSpace c =
+            if not $ null word
+            then recur (reverse word : res) [] cs
+            else recur res [] cs
+          | C.isAlpha c || c == '\'' =
+              recur res (c:word) cs
+          | otherwise =
+              recur (reverse word : res) [c] cs
+        recur res [] [] = reverse $ res
+        recur res word [] = reverse $ reverse word : res
+
+-- http://www.gutenberg.org/cache/epub/3160/pg3160.txt
+exampleLearnTrigrams =
+  do odyssey <- readFile "pg3160.txt"
+     let dataset =
+           [ (someWords, extractFeatures someWords)
+           | ws <- L.tails $ take 1000 $ drop 1000 $
+                   xwords odyssey
+           , let someWords = take 3 ws ]
+     let allFeatures = S.unions $ map (S.fromList . snd) dataset
+     print ("number of different features:", S.size $ allFeatures)
+     let featureIds = M.fromList $ zip (S.toList allFeatures) [1..]
+         (_, maxFeatureId) = M.findMax featureIds
+     let encodedDataset =
+           [ (theWords,
+              let featureSet = S.fromList $
+                               map (featureIds M.!) features
+              in V.generate maxFeatureId (flip S.member featureSet))
+           | (theWords, features) <- dataset]
+     -- mapM_ print encodedDataset
+     r <- randomRBM maxFeatureId 30
+     learnFromTrainingSet False 2000000 r $ map snd encodedDataset
+     
+
+
+main = exampleLearnTrigrams
+
+
