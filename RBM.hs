@@ -1,7 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 -- Restricted Boltzmann Machine
 module RBM(RBM(RBM), 
-           randomRBM, hiddenFromVisible, hiddenFromVisibleD, 
+           randomRBM, randomVectorOfLength,
+           hiddenFromVisible, hiddenFromVisibleD, 
            visibleFromHidden, visibleFromHiddenD, sample,
            visibleFromBooleanVector, hiddenFromBooleanVector,
            matApplyUn, matApplyBin, energy,

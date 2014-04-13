@@ -13,9 +13,12 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Vector as V
 import Data.Bits(testBit, shift, (.|.), (.&.))
-import RBM(randomRBM, learnFromTrainingSet, stringFromBoolVector)
+import Data.Ord(comparing)
+import PrettyClassExt(printPretty)
+import Text.PrettyPrint.HughesPJClass(Pretty, pPrint, text)
+import RBM(randomRBM, randomVectorOfLength, learnFromTrainingSet, stringFromBoolVector)
 
-data Features
+data Feature
   = First Char
   | Other Char
   | Last3 Char
@@ -23,13 +26,18 @@ data Features
   | Last Char
     deriving (Eq, Ord, Show)
 
-extractFeatures :: [String] -> [(Int, Features)]
+-- A WordFeature is a feature of the word at a relative position
+type WordFeature = (Int, Feature)
+
+type Words = [String]
+
+extractFeatures :: Words -> [WordFeature]
 extractFeatures words =
   [ (pos, feature)
   | (word, pos) <- zip words [1..]
   , feature <- features word]
 
-features :: String -> [Features]
+features :: String -> [Feature]
 features [] = []
 features word =
   [ First $ head word ]
@@ -63,26 +71,52 @@ xwords = recur [] []
         recur res [] [] = reverse $ res
         recur res word [] = reverse $ reverse word : res
 
+
+encodeDataset :: M.Map WordFeature Int 
+                 -> [(Words, [WordFeature])]
+                 -> [(Words, V.Vector Bool)]
+encodeDataset featureIds dataset =
+  [ (theWords,
+     let featureSet = S.fromList $
+                      map (featureIds M.!) features
+     in V.generate maxid (flip S.member featureSet))
+  | (theWords, features) <- dataset]
+  where maxid = maximumFeatureId featureIds
+
+maximumFeatureId featureIds =
+  L.maximum $ map snd $ M.toList featureIds
+
+randomizeList :: [a] -> IO [a]
+randomizeList list =
+  do rs <- randomVectorOfLength $ length list
+     return $ map snd $ L.sortBy (comparing fst) $
+       zip (V.toList rs) list
+
+instance Pretty Feature where
+  pPrint = text . show
+
+numTrigrams = 10000
+
 main =
   do odyssey <- readFile "pg3160.txt"
      let dataset =
            [ (someWords, extractFeatures someWords)
-           | ws <- L.tails $ take 1000 $ drop 1000 $
+           | ws <- L.tails $ take numTrigrams $ drop 1000 $
                    xwords odyssey
            , let someWords = take 3 ws ]
-     let allFeatures = S.unions $ map (S.fromList . snd) dataset
+     shuffledDataset <- randomizeList dataset
+     putStrLn $ "some random input trigrams of the " ++ show numTrigrams
+     mapM_ printPretty $ take 20 $ shuffledDataset
+     let (testData, trainingData) = L.splitAt 100 shuffledDataset
+     let allFeatures = S.unions $ map (S.fromList . snd) trainingData
      print ("number of different features:", S.size $ allFeatures)
      let featureIds = M.fromList $ zip (S.toList allFeatures) [1..]
-         (_, maxFeatureId) = M.findMax featureIds
-     let encodedDataset =
-           [ (theWords,
-              let featureSet = S.fromList $
-                               map (featureIds M.!) features
-              in V.generate maxFeatureId (flip S.member featureSet))
-           | (theWords, features) <- dataset]
+     let encodedTrainingData = encodeDataset featureIds trainingData
      -- mapM_ print encodedDataset
-     r <- randomRBM maxFeatureId 30
-     learnFromTrainingSet False 2000000 r $ map snd encodedDataset
+     let numVisibles = maximumFeatureId featureIds
+     r <- randomRBM numVisibles 30
+     learnFromTrainingSet False 2000000 r $
+       map snd encodedTrainingData
      
 
 -- One interesting extension could be to input not only single
