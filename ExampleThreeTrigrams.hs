@@ -83,7 +83,7 @@ xwords = recur [] []
 
 encodeDataset :: M.Map WordFeature Int -> [[WordFeature]] -> [V.Vector Bool]
 encodeDataset featureIds dataset =
-  [ encodeInstance featureIds features | features <- dataset]
+  map (encodeInstance featureIds) dataset
   
 encodeInstance featureIds xinstance =
   let maxid = maximumFeatureId featureIds
@@ -114,6 +114,7 @@ data Modification =
   DroppedLetter Char
   | InsertedLetter Char
   | SwappedLetters Char Char
+  | ReplacedLetter Char Char
     deriving (Show)
   
 instance Show TestData where
@@ -134,6 +135,9 @@ prepareTestData featureIds ts =
 
 randomInt :: (Int,Int) -> IO Int
 randomInt (from, to) = R.getStdRandom (R.randomR (from, to))
+
+randomChar :: IO Char
+randomChar = R.getStdRandom (R.randomR ('a', 'z'))
 
 randomVectorElement :: V.Vector a -> IO a
 randomVectorElement vec =
@@ -162,16 +166,45 @@ randomlyModifiedWord word =
        else return ([], word)
   where
     modify =
-      do r <- randomInt (1, 1)
+      do r <- randomInt (1, 4)
          case r of
            1 -> do charIndex <- randomInt (0, pred $ length word)
                    let char = word !! charIndex
-                   return $ ( [DroppedLetter char]
-                            , deleteIndex charIndex word)
+                   return ( [DroppedLetter char]
+                          , deleteIndex charIndex word)
+           2 -> do charIndex <- randomInt (0, length word)
+                   char <- randomChar
+                   return ( [InsertedLetter char]
+                          , insertAtIndex charIndex char word)
+           3 -> do let n = length word - 2
+                   if n < 0
+                     then return ([], word)
+                     else do charIndex <- randomInt (0, n)
+                             let (a, b, modword) =
+                                   swapElementsAtIndex charIndex word
+                             return ( [SwappedLetters a b] , modword)
+           4 -> do charIndex <- randomInt (0, pred $ length word)
+                   char <- randomChar
+                   let (prev, modword) =
+                         replaceCharAtIndex charIndex char word
+                   return ( [ReplacedLetter prev char]
+                          , modword)
 
 deleteIndex idx list =
   let (before, (_:after)) = L.splitAt idx list
   in before ++ after
+
+insertAtIndex idx el list =
+  let (before, after) = L.splitAt idx list
+  in before ++ [el] ++ after
+
+swapElementsAtIndex idx list =
+  let (before, a:b:after) = L.splitAt idx list
+  in (a, b, before ++ [b,a] ++ after)
+
+replaceCharAtIndex idx el list =
+  let (before, x:after) = L.splitAt idx list
+  in (x, before ++ [el] ++ after)
 
 numTrigrams = 10000
 
@@ -198,7 +231,7 @@ main =
            encodeDataset featureIds $ map snd trainingDataset
      -- mapM_ print encodedDataset
      let numVisibles = maximumFeatureId featureIds
-     r <- randomRBM numVisibles 30
+     r <- randomRBM numVisibles 300
      preparedTestData <- prepareTestData featureIds testTrigrams
      mapM_ print preparedTestData
      learnFromTrainingSet False 2000000 r encodedTrainingData
