@@ -17,9 +17,11 @@ import Data.Bits(testBit, shift, (.|.), (.&.))
 import Data.Ord(comparing)
 import Data.Maybe(catMaybes)
 import Control.Monad(replicateM)
+import Control.DeepSeq(deepseq)
 import PrettyClassExt(printPretty)
 import Text.PrettyPrint.HughesPJClass(Pretty, pPrint, text)
-import RBM(randomRBM, randomVectorOfLength, learnFromTrainingSet, stringFromBoolVector)
+import RBM(randomRBM, randomVectorOfLength, learnFromTrainingSet,
+           stringFromBoolVector, findMostProbableVisibles)
 
 data Feature
   = First Char
@@ -86,10 +88,11 @@ encodeDataset featureIds dataset =
   map (encodeInstance featureIds) dataset
   
 encodeInstance featureIds xinstance =
-  let maxid = maximumFeatureId featureIds
-      featureSet = S.fromList $
-                   map (featureIds M.!) xinstance
-  in V.generate maxid $ flip S.member featureSet
+  V.generate maxid $ flip S.member featureSet
+  where
+    maxid = maximumFeatureId featureIds
+    featureSet = S.fromList $ catMaybes $ map lookup xinstance
+    lookup feat = M.lookup feat featureIds
 
 maximumFeatureId featureIds =
   L.maximum $ map snd $ M.toList featureIds
@@ -106,7 +109,7 @@ instance Pretty Feature where
 type Data = (Words, [WordFeature])
 
 data TestData =
-  Correct Words [WordFeature]
+  Correct Words [WordFeature] (V.Vector Bool)
   | Modified [Modification] Words Words [WordFeature] [WordFeature]
              (V.Vector Bool) (V.Vector Bool)
 
@@ -118,18 +121,20 @@ data Modification =
     deriving (Show)
   
 instance Show TestData where
-  show (Correct ws _) = 
+  show (Correct ws _ _) = 
     "Correct " ++ show ws
   show (Modified ms _ mod _ _ _ _) = 
     "Modified " ++ show ms ++ "\n  " ++ show mod
 
 
+prepareTestData :: M.Map WordFeature Int -> [Words] -> IO [TestData]
 prepareTestData featureIds ts =
   do ms <- replicateM 2000 $ 
            randomlyModifiedTrigram featureIds $ 
            V.fromList ts
      return $
-       [ Correct trigram $ extractFeatures trigram 
+       [ let fs = extractFeatures trigram 
+         in Correct trigram fs $ encodeInstance featureIds fs
        | trigram <- ts ]
        ++ take 1000 (catMaybes ms)
 
@@ -206,6 +211,42 @@ replaceCharAtIndex idx el list =
   let (before, x:after) = L.splitAt idx list
   in (x, before ++ [el] ++ after)
 
+
+runTest r testData =
+  do cs <- mapM canReconstruct testData
+     putStrLn "results by number of modifications:"
+     printPretty $
+       M.fromListWith (M.unionWith (+))
+       [ (numModifications t, M.singleton diff (1::Int))
+       | (t, diff) <- zip testData cs ]
+     putStrLn "results by kind of modifications:"
+     printPretty  $
+       M.fromListWith (M.unionWith (+))
+       [ (modkind t, M.singleton diff (1::Int))
+       | (t, diff) <- zip testData cs ]
+  where
+    canReconstruct testData =
+      do -- print ("testing", testData)
+         mp <- findMostProbableVisibles r $ input testData
+         let res = boolVectorDifference mp $ expected testData
+         res `deepseq` return res
+    input (Correct _ _ encoded) = encoded
+    input (Modified _ _ _ _ _ _ encoded) = encoded
+    expected (Correct _ _ encoded) = encoded
+    expected (Modified _ _ _ _ _ encoded _) = encoded
+    numModifications (Correct _ _ _) = 0
+    numModifications (Modified mods _ _ _ _ _ _) = length mods
+    modkind (Correct _ _ _) = S.empty
+    modkind (Modified mods _ _ _ _ _ _) = S.fromList $ map short mods
+    short (DroppedLetter _) = "DroppedLetter"
+    short (InsertedLetter _) = "InsertedLetter"
+    short (SwappedLetters _ _) = "SwappedLetters"
+    short (ReplacedLetter _ _) = "ReplacedLetter"
+
+boolVectorDifference a b = V.sum $ V.zipWith boolDiff a b
+  where boolDiff x y = if x == y then 0 else 1::Int
+
+
 numTrigrams = 10000
 
 main =
@@ -234,8 +275,15 @@ main =
      r <- randomRBM numVisibles 300
      preparedTestData <- prepareTestData featureIds testTrigrams
      mapM_ print preparedTestData
-     learnFromTrainingSet False 2000000 r encodedTrainingData
+     learnLoop r encodedTrainingData preparedTestData
      
+batchsize = 1000
+
+learnLoop r0 trainingData testData =
+  do r1 <- learnFromTrainingSet False batchsize r0 trainingData
+     putStrLn "training iteration done, now testing:"
+     runTest r1 testData
+     learnLoop r1 trainingData testData
 
 -- One interesting extension could be to input not only single
 -- characters via the 'Other' data, but pairs of characters.
