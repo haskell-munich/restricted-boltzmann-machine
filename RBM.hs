@@ -8,7 +8,8 @@ module RBM(RBM(RBM),
            matApplyUn, matApplyBin, energy,
            learn, learnFromTrainingSet,
            learnByRandomSearch, learnFromTrainingSetByRandomSearch,
-           stringToBoolVector, stringFromBoolVector
+           stringToBoolVector, stringFromBoolVector,
+           findMostProbableVisibles
            ) where
 
 import qualified Data.List as L
@@ -141,9 +142,9 @@ learn verbose !r v =
      verbr <- R.getStdRandom (R.randomR (0, 1.0::Double))
      let doPrint = verbose || verbr < 0.01
      if doPrint
-        then do putStrLn "v:"; print v
-                putStrLn "dv:"
-                print $ V.map ((/100) . fromIntegral . round . (*100)) dv
+        then do -- putStrLn "v:"; print v
+                -- putStrLn "dv:"
+                -- print $ V.map ((/100) . fromIntegral . round . (*100)) dv
                 print("diff:",
                       V.sum $ V.map (**2) $ V.zipWith (-) visibles dv)
                 let boolDiff x y = if x == y then 0 else 1::Int
@@ -228,5 +229,13 @@ stringFromBoolVector :: V.Vector Bool -> String
 stringFromBoolVector = V.toList . V.map toDigit
   where toDigit True = '1'
         toDigit False = '0'
+
+
+findMostProbableVisibles :: RBM -> V.Vector Bool -> IO (V.Vector Bool)
+findMostProbableVisibles r input =
+  do h <- hiddenFromVisible r (V.cons True input)
+     let hiddens = V.cons 1 $ V.map booleanToDouble h
+     let dv = V.cons 1 $ visibleFromHiddenD r hiddens
+     return $ V.drop 1 $ V.map (>0.5) dv
 
 
