@@ -280,7 +280,8 @@ main =
 batchsize = 1000
 
 learnLoop r0 trainingData testData =
-  do r1 <- learnFromTrainingSet False batchsize r0 trainingData
+  do td <- randomizeList trainingData
+     r1 <- learnFromTrainingSet False batchsize r0 td
      putStrLn "training iteration done, now testing:"
      runTest r1 testData
      learnLoop r1 trainingData testData
