@@ -247,7 +247,7 @@ boolVectorDifference a b = V.sum $ V.zipWith boolDiff a b
   where boolDiff x y = if x == y then 0 else 1::Int
 
 
-numTrigrams = 10000
+numTrigrams = 100000
 
 main =
   do odyssey <- readFile "pg3160.txt"
@@ -257,7 +257,7 @@ main =
                    xwords odyssey ]
      shuffledTrigrams <- randomizeList trigrams
      let (testTrigrams, trainingTrigrams) = 
-           L.splitAt 100 shuffledTrigrams
+           L.splitAt 1000 shuffledTrigrams
      let trainingDataset =
            [ (trigram, extractFeatures trigram)
            | trigram <- trainingTrigrams ]
@@ -272,7 +272,7 @@ main =
            encodeDataset featureIds $ map snd trainingDataset
      -- mapM_ print encodedDataset
      let numVisibles = maximumFeatureId featureIds
-     r <- randomRBM numVisibles 300
+     r <- randomRBM numVisibles 600
      preparedTestData <- prepareTestData featureIds testTrigrams
      mapM_ print preparedTestData
      learnLoop r encodedTrainingData preparedTestData
